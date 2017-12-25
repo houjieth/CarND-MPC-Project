@@ -60,6 +60,8 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
     }
   }
 
+  // Note: Use QR decomposition to solve least square problem (which solves this polynomial fit
+  // problem)
   auto Q = A.householderQr();
   auto result = Q.solve(yvals);
   return result;
@@ -85,12 +87,12 @@ int main() {
         string event = j[0].get<string>();
         if (event == "telemetry") {
           // j[1] is the data JSON object
-          vector<double> ptsx = j[1]["ptsx"];
-          vector<double> ptsy = j[1]["ptsy"];
-          double px = j[1]["x"];
-          double py = j[1]["y"];
-          double psi = j[1]["psi"];
-          double v = j[1]["speed"];
+          vector<double> ptsx = j[1]["ptsx"];  // waypoints' x in world coordinates
+          vector<double> ptsy = j[1]["ptsy"];  // waypoints' y in world coordinates
+          double px = j[1]["x"];  // car's x in world coordinates
+          double py = j[1]["y"];  // car's y in world coordinates
+          double psi = j[1]["psi"];  // car's yaw
+          double v = j[1]["speed"];  // car's speed
 
           /*
           * TODO: Calculate steering angle and throttle using MPC.
@@ -98,6 +100,79 @@ int main() {
           * Both are in between [-1, 1].
           *
           */
+          // Because of the observation latency. By the time we look at the current situation, the
+          // car has already moved on. So we need to do motion compensation, which is simply a
+          // prediction of the state
+          double dt = 0.1;  // duration of latency
+          double Lf = 2.67;  // Distance between car's front axle center to car's gravity center
+
+          // Use same-velocity, same-heading model for prediction within duration of this latency
+          double pred_px = px + v * cos(psi) * dt;
+          double pred_py = py + v * sin(psi) * dt;
+          px = pred_px;
+          py = pred_py;
+          // psi and v won't change during this dt
+
+          // OK, now we have the final car location px and py
+
+          // We transform the waypoints from world coordinates into car coordinates (front is x,
+          // left is y) so the polyfit result won't be something like "x = 3" (where the coefficent
+          // is infinite large) because the polyfit result will almost certainly face to the
+          // front along the x axis in car's coordinate and the slope won't be very large
+          Eigen::VectorXd ptsx_car(ptsx.size());
+          Eigen::VectorXd ptsy_car(ptsx.size());
+
+          // For reference, remember the formula for translating from car coordinate to world
+          // coordinate is:
+          //   x_w = car_x + cos(psi) * x_c - sin(psi) * y_c
+          //   y_w = car_y + sin(psi) * x_c + cos(psi) * y_c
+          // where x_w, y_w are world coordinate, x_c, y_c are car coordinate, car_x, car_y are
+          // car's location in world coordinate, and psi is counterclock-wise rotation of car's
+          // heading from +x axis(i.e., yaw)
+          //
+          // If you use the above formula, you can get the derived formulas:
+          //   x_c =  (x_w - car_x) * cos(psi) + (y_w - car_y) * sin(psi)
+          //   y_c = -(x_w - car_x) * sin(psi) + (y_w - car_y) * cos(psi)
+          // which lets you convert from world coordinate into car coordinate
+          for (auto i = 0; i < ptsx.size(); ++i) {
+            double x = ptsx[i] - px;
+            double y = ptsy[i] - py;
+            ptsx_car[i] =   x * cos(psi) + y * sin(psi);
+            ptsy_car[i] = - x * sin(psi) + y * cos(psi);
+          }
+
+          // Now we polyfit the waypoints into a polynomial line. Polynomial line is good enough
+          // since most of the road is polynomial (usually <= order of 3)
+          auto coeffs = polyfit(ptsx_car, ptsy_car, 3);
+
+          // After we have the polynomial line, we will try to optimize our actuators so our car
+          // can follow this line (trajectory), comply with some other constraints, while
+          // optimizing our cost (see MPC.cpp for details). So now we will prepare the
+          // optimization problem input using this polynomial line
+
+          // First get the initial cte(cross track error) and epsi(psi error). By "initial" I
+          // mean the cte and epsi at the begining of the line. The initial values are part of
+          // the optimization constraints we need to later provide to the solver
+
+          // Get the initial cte(cross track error)
+          double cte = polyeval(coeffs, 0) - 0;
+
+          // Get the initial epsi
+          // Let's say p(x) is the fitted polynomial line. The initial psi is the tangential
+          // value at x = 0, which is p'(0), which is coeffs[1]
+          double epsi = atan(coeffs[1]) - 0;
+
+          // OK, now we will start solving the optimization problem
+          Eigen::VectorXd state(6);
+          state << px, py, psi, v, cte, epsi;
+
+          // Provide initial state as one of the constraints. We will add more constraints
+          // and costs later.
+          // Also provide coeffs to help define costs.
+          auto vars = mpc.Solve(state, coeffs);
+
+          // TODO(jie): Get steer and throttle value from the solver result
+
           double steer_value;
           double throttle_value;
 
