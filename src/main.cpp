@@ -104,7 +104,8 @@ int main() {
           // car has already moved on. So we need to do motion compensation, which is simply a
           // prediction of the state
           double dt = 0.1;  // duration of latency
-          double Lf = 2.67;  // Distance between car's front axle center to car's gravity center
+          const double Lf = 2.67;  // Distance between car's front axle center to car's gravity
+                                   // center
 
           // Use same-velocity, same-heading model for prediction within duration of this latency
           double pred_px = px + v * cos(psi) * dt;
