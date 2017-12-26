@@ -156,12 +156,16 @@ int main() {
           // the optimization constraints we need to later provide to the solver
 
           // Get the initial cte(cross track error)
-          double cte = polyeval(coeffs, 0) - 0;
+          // des_y = p(0)
+//          double cte = 0 - polyeval(coeffs, 0);  // error = actual - target
+          double cte = polyeval(coeffs, 0); // web
 
           // Get the initial epsi
           // Let's say p(x) is the fitted polynomial line. The initial psi is the tangential
           // value at x = 0, which is p'(0), which is coeffs[1]
-          double epsi = atan(coeffs[1]) - 0;
+          // des_psi = atan(p'(0))
+//          double epsi = 0 - atan(coeffs[1]);  // error = actual - target
+          double epsi = - atan(coeffs[1]); // web
 
           // OK, now we will start solving the optimization problem
           Eigen::VectorXd state(6);
@@ -173,9 +177,10 @@ int main() {
           auto vars = mpc.Solve(state, coeffs);
 
           // TODO(jie): Get steer and throttle value from the solver result
+          double steer_value = vars[0] / (deg2rad(25) * Lf);
+          double throttle_value = vars[1];
 
-          double steer_value;
-          double throttle_value;
+          cout << "JIEJIE: steer_value: " << steer_value << endl;
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
@@ -189,7 +194,10 @@ int main() {
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
-
+          for (int i = 2; i < vars.size(); i += 2) {
+            mpc_x_vals.push_back(vars[i]);
+            mpc_y_vals.push_back(vars[i + 1]);
+          }
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
 
@@ -199,10 +207,14 @@ int main() {
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
-
+          double step_length = 2.0;
+          double num_points = 20;
+          for (int i = 1; i < num_points; ++i) {
+            next_x_vals.push_back(step_length * i);
+            next_y_vals.push_back(polyeval(coeffs, step_length * i));
+          }
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
-
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;

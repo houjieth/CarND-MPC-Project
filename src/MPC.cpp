@@ -21,10 +21,6 @@ size_t delta_start = epsi_start + N;
 size_t a_start = delta_start + N - 1;  // there are only (N-1) delta
 // and of couse there are also only (N-1) a as well
 
-double deg2rad(double x) { return x * M_PI / 180; }
-double rad2deg(double x) { return x * 180 / M_PI; }
-
-
 // This value assumes the model presented in the classroom is used.
 //
 // It was obtained by measuring the radius formed by running the vehicle in the
@@ -36,6 +32,15 @@ double rad2deg(double x) { return x * 180 / M_PI; }
 //
 // This is the length from front to CoG that has a similar radius.
 const double Lf = 2.67;
+
+const double ref_v = 60;  // target velocity during optimization
+
+namespace {
+
+double deg2rad(double x) { return x * M_PI / 180; }
+double rad2deg(double x) { return x * 180 / M_PI; }
+
+} // namespace
 
 class FG_eval {
  public:
@@ -49,6 +54,113 @@ class FG_eval {
     // `fg` a vector of the cost constraints, `vars` is a vector of variable values (state & actuators)
     // NOTE: You'll probably go back and forth between this function and
     // the Solver function below.
+
+    // Ipopt asks us to store the cost function f(x)'s value in fg[0], and constraint functions g(x)
+    // _1, g(x)_2, ...'s value in fg[1], fg[2], ...
+
+    // OK, now we set up costs
+
+    fg[0] = 0;  // Initialize the cost
+
+    // Set weight for different parameters
+    const int cte_cost_weight = 2000;
+    const int epsi_cost_weight = 2000;
+    const int v_cost_weight = 1;
+    const int delta_cost_weight = 10;
+    const int a_cost_weight = 10;
+    const int delta_change_cost_weight = 100;
+    const int a_change_cost_weight = 10;
+
+    // Add cost for cte, epsi and ev(error of velocity) for all steps
+    // This is for reducing the cte, epsi and ev for all steps
+    // Notice we have N calculations for each of them
+    for (auto t = 0; t < N; ++t) {
+      fg[0] += cte_cost_weight * CppAD::pow(vars[cte_start + t], 2);
+      fg[0] += epsi_cost_weight * CppAD::pow(vars[epsi_start + t], 2);
+      fg[0] += v_cost_weight * CppAD::pow(vars[epsi_start + t] - ref_v, 2);
+    }
+
+    // Add cost for delta and a
+    // This is for reducing the steer and throttle for all actuations
+    // Notice we have N-1 calculations for each of them
+    for (auto t = 0; t < N - 1; ++t) {
+      fg[0] += delta_cost_weight * CppAD::pow(vars[delta_start + t], 2);
+      fg[0] += a_cost_weight * CppAD::pow(vars[a_start + t], 2);
+    }
+
+    // Add cost for delta change and a change
+    // This is for reducing the steer change and throttle change between every adjacent actuations
+    // Notice we have N-2 calculations for each of them
+    for (auto t = 0; t < N - 2; ++t) {
+      fg[0] += delta_change_cost_weight *
+          CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+      fg[0] += a_change_cost_weight *
+          CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+    }
+
+    // OK, now we set up constraints
+
+    // Add constraints for initial step
+    // This makes sure that our planning path starts from the given initial state
+    // According to the way we define constraints upper bound and lower bound,
+    // we are actually writing g(x) = val here.
+    fg[1 + x_start] = vars[x_start];
+    fg[1 + y_start] = vars[y_start];
+    fg[1 + psi_start] = vars[psi_start];
+    fg[1 + v_start] = vars[v_start];
+    fg[1 + cte_start] = vars[cte_start];
+    fg[1 + epsi_start] = vars[epsi_start];
+
+    // Add constraints between every 2 adjacent steps
+    for (auto t = 1; t < N; ++t) {
+      // State at new step (at t)
+      AD<double> x1 = vars[x_start + t];
+      AD<double> y1 = vars[y_start + t];
+      AD<double> psi1 = vars[psi_start + t];
+      AD<double> v1 = vars[v_start + t];
+      AD<double> cte1 = vars[cte_start + t];
+      AD<double> epsi1 = vars[epsi_start + t];
+
+      // State at old step (at t-1)
+      AD<double> x0 = vars[x_start + t - 1];
+      AD<double> y0 = vars[y_start + t - 1];
+      AD<double> psi0 = vars[psi_start + t - 1];
+      AD<double> v0 = vars[v_start + t - 1];
+      AD<double> cte0 = vars[cte_start + t - 1];
+      AD<double> epsi0 = vars[epsi_start + t - 1];
+
+      // Actuator at old step (at t - 1)
+      AD<double> delta0 = vars[delta_start + t - 1];
+      AD<double> a0 = vars[a_start + t - 1];
+
+      // Desired y, i.e., p(x0)
+      AD<double> des_y = coeffs[0]
+          + coeffs[1] * x0
+          + coeffs[2] * CppAD::pow(x0, 2)
+          + coeffs[3] * CppAD::pow(x0, 3);
+
+      // Desired psi, i.e., atan(p'(x0))
+      AD<double> des_psi = atan(coeffs[1]
+          + 2 * coeffs[2] * x0
+          + 3 * coeffs[3] * pow(x0, 2));
+
+      // Set up constraints between old and new step
+      // According to the way we define constraints upper bound and lower bound,
+      // we are actually writing g(x) - val = 0 here (same meaning as g(x) = val)
+      // This makes sure that every step transition follow the our kinetics model
+      fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
+      fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
+      fg[1 + psi_start + t] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
+      fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
+//      fg[1 + cte_start + t] = cte1 - ((y0 - des_y) + (v0 * CppAD::sin(epsi0) * dt));
+//      fg[1 + epsi_start + t] = epsi1 - ((psi0 - des_psi) + v0 * delta0 / Lf * dt);
+
+      fg[1 + cte_start + t] = cte1 - ((des_y - y0) + (v0 * CppAD::sin(epsi0) * dt)); // web
+      fg[1 + epsi_start + t] = epsi1 - ((psi0 - des_psi) - v0 * delta0 / Lf * dt); // web
+    }
+
+    // Please notice that we never require (i.e., set constraints) that every step stands on the
+    // poly line. Instead, ?? TODO(jie)
   }
 };
 
@@ -181,5 +293,12 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   //
   // {...} is shorthand for creating a vector, so auto x1 = {1.0,2.0}
   // creates a 2 element double vector.
-  return {};
+  vector<double> solved;
+  solved.push_back(solution.x[delta_start]);
+  solved.push_back(solution.x[a_start]);
+  for (int i = 0; i < N; ++i) {
+    solved.push_back(solution.x[x_start + i]);
+    solved.push_back(solution.x[y_start + i]);
+  }
+  return solved;
 }
