@@ -6,7 +6,7 @@
 using CppAD::AD;
 
 // TODO: Set the timestep length and duration
-size_t N = 10;
+size_t N = 20;
 double dt = 0.1;
 
 // Indexes for the first step var value
@@ -33,7 +33,7 @@ size_t a_start = delta_start + N - 1;  // there are only (N-1) delta
 // This is the length from front to CoG that has a similar radius.
 const double Lf = 2.67;
 
-const double ref_v = 60;  // target velocity during optimization
+const double ref_v = 100;  // target velocity during optimization
 
 namespace {
 
@@ -77,7 +77,7 @@ class FG_eval {
     for (auto t = 0; t < N; ++t) {
       fg[0] += cte_cost_weight * CppAD::pow(vars[cte_start + t], 2);
       fg[0] += epsi_cost_weight * CppAD::pow(vars[epsi_start + t], 2);
-      fg[0] += v_cost_weight * CppAD::pow(vars[epsi_start + t] - ref_v, 2);
+      fg[0] += v_cost_weight * CppAD::pow(vars[v_start + t] - ref_v, 2);
     }
 
     // Add cost for delta and a
@@ -152,15 +152,19 @@ class FG_eval {
       fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
       fg[1 + psi_start + t] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
       fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
-//      fg[1 + cte_start + t] = cte1 - ((y0 - des_y) + (v0 * CppAD::sin(epsi0) * dt));
-//      fg[1 + epsi_start + t] = epsi1 - ((psi0 - des_psi) + v0 * delta0 / Lf * dt);
 
-      fg[1 + cte_start + t] = cte1 - ((des_y - y0) + (v0 * CppAD::sin(epsi0) * dt)); // web
-      fg[1 + epsi_start + t] = epsi1 - ((psi0 - des_psi) - v0 * delta0 / Lf * dt); // web
+      fg[1 + cte_start + t] = cte1 - ((des_y - y0) + (v0 * CppAD::sin(epsi0) * dt));
+      fg[1 + epsi_start + t] = epsi1 - ((des_psi - psi0) + v0 * delta0 / Lf * dt);
     }
 
     // Please notice that we never require (i.e., set constraints) that every step stands on the
-    // poly line. Instead, ?? TODO(jie)
+    // poly line. Instead, we only set the constraints so that every state transition can follow
+    // our kinetics model.
+
+    // But of course, we use the poly line as the target. Why the poly line affects our
+    // optimization? Because we try to optimize cte and epsi to 0, and we use the poly line to
+    // help us define what cte and epsi should be. Every cte and epsi must refer to the diff
+    // against the poly line!
   }
 };
 

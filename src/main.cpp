@@ -157,19 +157,19 @@ int main() {
 
           // Get the initial cte(cross track error)
           // des_y = p(0)
-//          double cte = 0 - polyeval(coeffs, 0);  // error = actual - target
+          // cte = des_y - y
           double cte = polyeval(coeffs, 0); // web
 
           // Get the initial epsi
           // Let's say p(x) is the fitted polynomial line. The initial psi is the tangential
           // value at x = 0, which is p'(0), which is coeffs[1]
           // des_psi = atan(p'(0))
-//          double epsi = 0 - atan(coeffs[1]);  // error = actual - target
-          double epsi = - atan(coeffs[1]); // web
+          // epsi = des_psi - psi
+          double epsi = atan(coeffs[1]); // web
 
           // OK, now we will start solving the optimization problem
           Eigen::VectorXd state(6);
-          state << px, py, psi, v, cte, epsi;
+          state << 0, 0, 0, v, cte, epsi;
 
           // Provide initial state as one of the constraints. We will add more constraints
           // and costs later.
@@ -177,10 +177,19 @@ int main() {
           auto vars = mpc.Solve(state, coeffs);
 
           // TODO(jie): Get steer and throttle value from the solver result
-          double steer_value = vars[0] / (deg2rad(25) * Lf);
-          double throttle_value = vars[1];
+          // In all of above code, and FG solver code, we use standard coordinates:
+          //   world coordinates: absolute x and y, no need to explain
+          //   car coodinates: car facing x, left hand side facing y
+          // So the delta we calculate is using the car coordinates defined as above. For
+          // example, a greater than 0 delta means steering to the left. But in emulator, it uses
+          // opposite definition. For example, a small than 0 steer value means steering to the
+          // left. So we have to convert delta to the emulator's steering definition
+          double steer_value = - vars[0] / (deg2rad(25) * Lf);
 
-          cout << "JIEJIE: steer_value: " << steer_value << endl;
+          // a (using our coordinates defined above) and throttle (using emulator's own
+          // definition) fortunately shares the same meaning. Greater than 0 means accelerating and
+          // smaller than 0 means braking. So no need for conversion.
+          double throttle_value = vars[1];
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
@@ -208,7 +217,7 @@ int main() {
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
           double step_length = 2.0;
-          double num_points = 20;
+          double num_points = 40;
           for (int i = 1; i < num_points; ++i) {
             next_x_vals.push_back(step_length * i);
             next_y_vals.push_back(polyeval(coeffs, step_length * i));
