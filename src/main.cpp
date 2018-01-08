@@ -176,7 +176,6 @@ int main() {
           // Also provide coeffs to help define costs.
           auto vars = mpc.Solve(state, coeffs);
 
-          // TODO(jie): Get steer and throttle value from the solver result
           // In all of above code, and FG solver code, we use standard coordinates:
           //   world coordinates: absolute x and y, no need to explain
           //   car coodinates: car facing x, left hand side facing y

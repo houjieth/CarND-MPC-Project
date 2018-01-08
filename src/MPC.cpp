@@ -68,7 +68,7 @@ class FG_eval {
     const int v_cost_weight = 1;
     const int delta_cost_weight = 10;
     const int a_cost_weight = 10;
-    const int delta_change_cost_weight = 100;
+    const int delta_change_cost_weight = 10;
     const int a_change_cost_weight = 10;
 
     // Add cost for cte, epsi and ev(error of velocity) for all steps
