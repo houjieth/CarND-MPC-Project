@@ -8,7 +8,7 @@ The update equation is the following (taken from the course):
 
 ![alt text](Equations.png "Equations")
 
-## Choosing timestep length and elapsed duration
+### Choosing timestep length and elapsed duration
 
 I believe we have two goals here:
 
